@@ -1,0 +1,47 @@
+# ── Web Framework ─────────────────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9
+websockets==12.0
+httpx==0.27.0
+
+# ── Database ──────────────────────────────────────────────────────────────────
+sqlalchemy[asyncio]==2.0.30
+asyncpg==0.29.0
+alembic==1.13.1
+pgvector==0.2.5
+psycopg2-binary==2.9.9
+
+# ── Task Queue ────────────────────────────────────────────────────────────────
+celery==5.3.6
+redis==5.0.4
+
+# ── Computer Vision ───────────────────────────────────────────────────────────
+# NOTE: Python 3.12 requires opencv-python-headless >= 4.10
+opencv-python-headless
+ultralytics==8.2.18
+# mediapipe 0.10.14+ supports Python 3.12
+mediapipe>=0.10.14
+# insightface — pinned to latest stable; builds from source on 3.12 if needed
+insightface==0.7.3
+# onnxruntime: unpinned so pip picks the correct wheel for your Python/OS
+onnxruntime
+# onnxruntime-gpu          # Uncomment for NVIDIA GPU inference
+
+# ── ML / Numerics ─────────────────────────────────────────────────────────────
+numpy>=1.26,<2.0
+Pillow>=10.3.0
+scipy>=1.13.0
+
+# ── Config & Utils ────────────────────────────────────────────────────────────
+pydantic==2.7.1
+pydantic-settings==2.2.1
+python-dotenv==1.0.1
+pyyaml==6.0.1
+aiofiles==23.2.1
+python-jose[cryptography]==3.3.0
+
+# ── Dev / Testing ─────────────────────────────────────────────────────────────
+pytest==8.2.0
+pytest-asyncio==0.23.6
+anyio[trio]==4.3.0

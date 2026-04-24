@@ -1,0 +1,104 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Campus Eye — Runtime Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+app:
+  name: "Campus Eye"
+  version: "1.0.0"
+  debug: false
+
+# ── Video Sources ─────────────────────────────────────────────────────────────
+cameras:
+  - id: "cam_01"
+    name: "Main Entrance"
+    url: "${CAMERA_URL}"          # overridden by env var
+    enabled: true
+    zone: "entrance"              # zone label for loitering detection
+
+# ── Processing ────────────────────────────────────────────────────────────────
+processing:
+  process_fps: 10             # detection analysis rate (CPU-limited)
+  stream_fps: 30              # WebSocket video stream rate (browser)
+  frame_width: 640
+  frame_height: 480
+  reconnect_delay_seconds: 5  # RTSP reconnect wait
+
+# ── Detection Thresholds ──────────────────────────────────────────────────────
+detection:
+  yolo_confidence: 0.45           # minimum YOLO detection confidence (normal mode)
+  exam_confidence: 0.25            # lower threshold for exam objects (phones easier to miss)
+  face_recognition_threshold: 0.50  # cosine similarity threshold (0–1)
+  loitering_threshold_seconds: 30   # seconds before loitering alert
+  littering_threshold_seconds: 20   # seconds an object is unattended before littering alert
+  talking_proximity_px: 120         # max face-center distance (px) to flag talking
+  talking_frames: 15                # consecutive frames at proximity before alert
+  head_swivel_yaw_degrees: 25     # head turn angle to flag
+  head_swivel_frames: 10          # consecutive frames to confirm
+  proximity_overlap_iou: 0.05     # IoU to flag hand-to-hand interaction
+  motion_vandalism_threshold: 0.15  # optical flow magnitude (0–1)
+  clip_seconds_before: 5            # seconds to retain before alert for clip
+  clip_seconds_after: 5             # seconds to record after alert for clip
+
+# ── Mode ──────────────────────────────────────────────────────────────────────
+mode:
+  current: "normal"               # "normal" | "exam"
+  # Exam schedule: system auto-switches at these times (24h format)
+  # Leave empty to disable auto-switching.
+  schedule:
+    - day: "Monday"
+      start: "09:00"
+      end: "12:00"
+      mode: "exam"
+    - day: "Wednesday"
+      start: "14:00"
+      end: "17:00"
+      mode: "exam"
+
+# ── Alerts ────────────────────────────────────────────────────────────────────
+alerts:
+  email:
+    enabled: true
+    from: "${SMTP_USER}"
+    to: "${ALERT_EMAIL_TO}"
+  discord:
+    enabled: true
+    webhook_url: "${DISCORD_WEBHOOK_URL}"
+  websocket:
+    enabled: true
+
+# ── Normal Mode — what to detect ─────────────────────────────────────────────
+normal_mode:
+  detect_loitering: true
+  detect_littering: true
+  detect_vandalism: true
+  detect_unknown_faces: true
+  detect_weapons: true              # knife / scissors → immediate alert
+  detect_vehicle_intrusion: true    # bicycle / motorcycle / car in pedestrian zone
+  detect_alcohol: true              # bottle / wine glass on campus
+  detect_overcrowding: true         # person count threshold
+  overcrowding_threshold: 10        # number of persons to trigger alert
+
+# ── Exam Mode — what to detect ───────────────────────────────────────────────
+exam_mode:
+  detect_phones: true
+  detect_watches: true
+  detect_foreign_papers: true
+  detect_talking: true
+  detect_head_swiveling: true
+  detect_hand_interaction: true
+  detect_drink: true                # bottle / cup brought into exam hall
+  detect_crowd_cheat: true          # cluster of ≥3 students huddled together
+  crowd_cheat_threshold: 3          # minimum cluster size to alert
+  skip_invigilators: true           # ignore known invigilators
+
+# ── Clip Recording ──────────────────────────────────────────────────
+clip_recording:
+  enabled: true
+  codec: mp4v                      # OpenCV FourCC code
+  fps: 10                          # clip recording fps
+
+# ── Storage ───────────────────────────────────────────────────────────────────
+storage:
+  snapshot_dir: "media/snapshots"
+  clip_dir: "media/clips"
+  model_dir: "models"

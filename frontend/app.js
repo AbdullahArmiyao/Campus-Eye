@@ -1,0 +1,708 @@
+/* =============================================================
+   Campus Eye — Dashboard JavaScript
+   Handles: WebSocket streams, alerts, face registry, event log,
+            mode switching, schedule display, toasts, modals.
+   ============================================================= */
+
+const API = '';          // same origin — empty string = relative URLs
+const WS_PROTO = location.protocol === 'https:' ? 'wss' : 'ws';
+const WS_BASE  = `${WS_PROTO}://${location.host}`;
+
+/* ── State ─────────────────────────────────────────────────── */
+let currentMode   = 'normal';
+let eventsPage    = 1;
+let eventsTotal   = 0;
+let alertCount    = 0;
+let streamWs      = null;
+let alertWs       = null;
+let feedFrameTs   = 0;
+let feedFpsTimer  = null;
+let fpsFrameCount = 0;
+
+/* ── Icons per event type ───────────────────────────────────── */
+const EVENT_ICONS = {
+  loitering:        '🚶',
+  littering:        '🗑️',
+  vandalism:        '💥',
+  unknown_face:     '👤',
+  foreign_object:   '📱',
+  head_swiveling:   '👀',
+  talking:          '💬',
+  hand_interaction: '🤝',
+};
+
+/* =============================================================
+   INIT
+   ============================================================= */
+document.addEventListener('DOMContentLoaded', () => {
+  connectAlertWebSocket();
+  connectStreamWebSocket();
+  loadStats();
+  loadFaces();
+  loadMode();
+  loadSchedule();
+  updateSourceStatus();
+  loadUploads();
+
+  // Poll snapshot fallback if WS stream fails
+  setInterval(pollSnapshot, 2000);
+
+  // Refresh stats every 30s
+  setInterval(loadStats, 30000);
+
+  // Refresh source status every 5s
+  setInterval(updateSourceStatus, 5000);
+
+  // Update feed info
+  document.getElementById('info-api').textContent = `${location.origin}/api`;
+});
+
+/* =============================================================
+   NAVIGATION
+   ============================================================= */
+function showPanel(name, el) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById(`panel-${name}`).classList.add('active');
+  el.classList.add('active');
+
+  if (name === 'events') loadEvents();
+  if (name === 'faces')  loadFaces();
+  if (name === 'settings') { loadMode(); loadSchedule(); }
+}
+
+/* =============================================================
+   WEBSOCKET — Live stream
+   ============================================================= */
+function connectStreamWebSocket() {
+  if (streamWs) streamWs.close();
+
+  streamWs = new WebSocket(`${WS_BASE}/ws/stream`);
+
+  streamWs.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'frame' && msg.data) {
+        const img = document.getElementById('live-feed');
+        img.src = `data:image/jpeg;base64,${msg.data}`;
+        fpsFrameCount++;
+      }
+    } catch (_) {}
+  };
+
+  streamWs.onclose = () => {
+    setTimeout(connectStreamWebSocket, 3000);
+  };
+
+  // FPS counter
+  if (feedFpsTimer) clearInterval(feedFpsTimer);
+  feedFpsTimer = setInterval(() => {
+    document.getElementById('feed-fps-tag').textContent = `${fpsFrameCount} FPS`;
+    fpsFrameCount = 0;
+  }, 1000);
+}
+
+/* Fallback: poll /api/stream/snapshot every 2s if WS not delivering */
+let lastFeedSrc = '';
+function pollSnapshot() {
+  if (streamWs && streamWs.readyState === WebSocket.OPEN) return;
+  const img = document.getElementById('live-feed');
+  const url = `/api/stream/snapshot?t=${Date.now()}`;
+  img.src = url;
+}
+
+/* =============================================================
+   WEBSOCKET — Alerts
+   ============================================================= */
+function connectAlertWebSocket() {
+  if (alertWs) alertWs.close();
+
+  alertWs = new WebSocket(`${WS_BASE}/ws/alerts`);
+
+  alertWs.onopen = () => {
+    setWsStatus(true);
+  };
+
+  alertWs.onmessage = (e) => {
+    try {
+      const alert = JSON.parse(e.data);
+      handleIncomingAlert(alert);
+    } catch (_) {}
+  };
+
+  alertWs.onclose = () => {
+    setWsStatus(false);
+    setTimeout(connectAlertWebSocket, 4000);
+  };
+
+  alertWs.onerror = () => setWsStatus(false);
+}
+
+function setWsStatus(connected) {
+  const dot   = document.getElementById('ws-dot');
+  const label = document.getElementById('ws-label');
+  const info  = document.getElementById('info-ws');
+  dot.className   = 'ws-dot' + (connected ? ' connected' : '');
+  label.textContent = connected ? 'Live' : 'Reconnecting…';
+  if (info) info.textContent = connected ? '✔ Connected' : '✗ Disconnected';
+}
+
+/* =============================================================
+   ALERT HANDLING
+   ============================================================= */
+function handleIncomingAlert(alert) {
+  alertCount++;
+
+  // Update badge
+  const badge = document.getElementById('alert-badge');
+  badge.textContent = alertCount;
+  badge.style.display = 'inline';
+
+  // Update unack stat
+  const unack = document.getElementById('stat-unack');
+  if (unack.textContent !== '—') unack.textContent = parseInt(unack.textContent || 0) + 1;
+
+  const item = buildAlertItem(alert, true);
+
+  // Prepend to recent-alerts (live panel)
+  const recent = document.getElementById('recent-alerts');
+  clearPlaceholder(recent);
+  recent.insertBefore(item.cloneNode(true), recent.firstChild);
+  if (recent.children.length > 10) recent.lastChild.remove();
+
+  // Prepend to all-alerts (alerts panel)
+  const allAlerts = document.getElementById('all-alerts');
+  clearPlaceholder(allAlerts);
+  allAlerts.insertBefore(item, allAlerts.firstChild);
+
+  // Toast
+  showToast(`${EVENT_ICONS[alert.event_type] || '⚠'} ${fmtType(alert.event_type)} detected`, 'error');
+
+  // Sound pulse on mode badge
+  const badge2 = document.getElementById('mode-badge');
+  badge2.style.transform = 'scale(1.08)';
+  setTimeout(() => badge2.style.transform = '', 300);
+}
+
+function buildAlertItem(alert, isNew = false) {
+  const el = document.createElement('div');
+  el.className = 'alert-item' + (isNew ? ' new' : '');
+  el.dataset.eventId = alert.event_id;
+
+  const snapHtml = alert.snapshot_url
+    ? `<img class="alert-snap" src="${alert.snapshot_url}" alt="snap"
+           onclick="openModal('${alert.snapshot_url}','${fmtType(alert.event_type)}','${(alert.description||'').replace(/'/g,"\\'")}')"/>`
+    : '';
+
+  el.innerHTML = `
+    <div class="alert-icon ${alert.event_type}">${EVENT_ICONS[alert.event_type] || '⚠'}</div>
+    <div class="alert-body">
+      <div class="alert-type">${fmtType(alert.event_type)}</div>
+      <div class="alert-desc">${alert.description || '—'}</div>
+    </div>
+    ${snapHtml}
+    <div class="alert-meta">
+      <div class="alert-time">${fmtTime(alert.timestamp)}</div>
+      <div class="alert-cam">${alert.camera_id || ''}</div>
+      ${alert.event_id ? `<button class="btn-ack" onclick="acknowledgeEvent(${alert.event_id},this)">Ack</button>` : ''}
+    </div>`;
+
+  return el;
+}
+
+function clearAlerts() {
+  const containers = ['recent-alerts', 'all-alerts'];
+  containers.forEach(id => {
+    const el = document.getElementById(id);
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem;padding:12px 0;">No alerts.</div>';
+  });
+  alertCount = 0;
+  document.getElementById('alert-badge').style.display = 'none';
+}
+
+/* =============================================================
+   STATS
+   ============================================================= */
+async function loadStats() {
+  try {
+    const [facesRes, eventsRes, unackRes, modeRes] = await Promise.all([
+      fetch(`${API}/api/faces/`),
+      fetch(`${API}/api/events/?page_size=1`),
+      fetch(`${API}/api/events/?acknowledged=false&page_size=1`),
+      fetch(`${API}/api/settings/mode`),
+    ]);
+
+    if (facesRes.ok) {
+      const faces = await facesRes.json();
+      document.getElementById('stat-faces').textContent = faces.length;
+    }
+    if (eventsRes.ok) {
+      const ev = await eventsRes.json();
+      document.getElementById('stat-events').textContent = ev.total;
+    }
+    if (unackRes.ok) {
+      const ua = await unackRes.json();
+      document.getElementById('stat-unack').textContent = ua.total;
+    }
+    if (modeRes.ok) {
+      const m = await modeRes.json();
+      document.getElementById('stat-mode').textContent = m.mode.toUpperCase();
+    }
+  } catch (e) {
+    console.warn('Stats load failed:', e);
+  }
+}
+
+/* =============================================================
+   VIDEO SOURCE MANAGEMENT
+   ============================================================= */
+async function updateSourceStatus() {
+  try {
+    const res = await fetch(`${API}/api/stream/source`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const dot   = document.getElementById('source-dot');
+    const label = document.getElementById('source-label');
+    if (!dot || !label) return;
+    const icons = { file: '📂', rtsp: '📡', webcam: '🎥', none: '⭕', unknown: '❓' };
+    dot.className = 'ws-dot' + (data.active ? ' connected' : '');
+    label.textContent = data.source
+      ? `${icons[data.type] || ''} ${data.source} ${data.active ? '(live)' : '(buffering…)'}`
+      : 'No source — upload a video or enter an RTSP URL below';
+  } catch (e) {}
+}
+
+async function uploadVideo() {
+  const input = document.getElementById('upload-file');
+  const file  = input.files[0];
+  if (!file) { showToast('Select a video file first', 'error'); return; }
+  const labelText = document.getElementById('upload-label-text');
+  const prog = document.getElementById('upload-progress');
+  if (labelText) labelText.textContent = `Uploading ${file.name}…`;
+  prog.style.display = 'block';
+  prog.textContent = 'Uploading…';
+  const fd = new FormData();
+  fd.append('file', file);
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', `${API}/api/stream/upload`);
+  xhr.upload.onprogress = (e) => {
+    if (e.lengthComputable) {
+      const pct = Math.round(e.loaded/e.total*100);
+      prog.textContent = `Uploading… ${pct}%`;
+    }
+  };
+  xhr.onload = () => {
+    if (xhr.status === 200) {
+      const data = JSON.parse(xhr.responseText);
+      showToast(`✔ ${data.filename} uploaded & processing started`, 'success');
+      prog.textContent = `✔ ${data.filename} (${data.size_kb} KB) — processing`;
+      if (labelText) labelText.textContent = `Click to select another video file`;
+      input.value = '';
+      loadUploads();
+      updateSourceStatus();
+    } else {
+      try {
+        const err = JSON.parse(xhr.responseText);
+        showToast(err.error || 'Upload failed', 'error');
+      } catch { showToast('Upload failed', 'error'); }
+      prog.style.display = 'none';
+      if (labelText) labelText.textContent = 'Click to select a video file — upload starts automatically';
+    }
+  };
+  xhr.onerror = () => {
+    prog.style.display = 'none';
+    if (labelText) labelText.textContent = 'Click to select a video file — upload starts automatically';
+    showToast('Upload error — check your connection', 'error');
+  };
+  xhr.send(fd);
+}
+
+async function setRtspSource() {
+  const url = document.getElementById('rtsp-url').value.trim();
+  if (!url) { showToast('Enter an RTSP URL or webcam index (e.g. 0)', 'error'); return; }
+  try {
+    const res = await fetch(`${API}/api/stream/source`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({url}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed');
+    showToast(`✔ Source set to: ${url}`, 'success');
+    updateSourceStatus();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function loadUploads() {
+  const list = document.getElementById('uploads-list');
+  if (!list) return;
+  try {
+    const res = await fetch(`${API}/api/stream/uploads`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.uploads.length) {
+      list.innerHTML = '<span style="color:var(--text-muted);">No uploads yet.</span>';
+      return;
+    }
+    list.innerHTML = data.uploads.map(f => `
+      <div style="display:flex;align-items:center;justify-content:space-between;
+                  padding:7px 10px;background:rgba(255,255,255,0.03);border-radius:6px;gap:8px;">
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary);">
+          📄 ${escHtml(f.name)} <span style="color:var(--text-muted);font-size:0.7rem;">${f.size_kb} KB</span>
+        </span>
+        <button class="btn-ack" onclick="useUpload('${escHtml(f.name)}')" style="white-space:nowrap;">▶ Use</button>
+      </div>`).join('');
+  } catch (e) {}
+}
+
+async function useUpload(filename) {
+  try {
+    const res = await fetch(`${API}/api/stream/use-upload`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({filename}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed');
+    showToast(`▶ Now processing: ${filename}`, 'success');
+    updateSourceStatus();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+/* =============================================================
+   MODE
+   ============================================================= */
+async function loadMode() {
+  try {
+    const res = await fetch(`${API}/api/settings/mode`);
+    if (!res.ok) return;
+    const data = await res.json();
+    applyMode(data.mode);
+  } catch (e) {}
+}
+
+async function setMode(mode) {
+  try {
+    const res = await fetch(`${API}/api/settings/mode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    });
+    if (!res.ok) throw new Error('Failed');
+    const data = await res.json();
+    applyMode(data.mode);
+    showToast(`Mode switched to ${mode.toUpperCase()}`, 'success');
+  } catch (e) {
+    showToast('Failed to switch mode', 'error');
+  }
+}
+
+function applyMode(mode) {
+  currentMode = mode;
+  const badge = document.getElementById('mode-badge');
+  const text  = document.getElementById('mode-text');
+  const label = document.getElementById('settings-mode-label');
+  badge.className = `mode-badge ${mode}`;
+  text.textContent = `${mode.toUpperCase()} MODE`;
+  if (label) label.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
+  document.getElementById('stat-mode').textContent = mode.toUpperCase();
+}
+
+function toggleMode() {
+  setMode(currentMode === 'normal' ? 'exam' : 'normal');
+}
+
+/* =============================================================
+   SCHEDULE
+   ============================================================= */
+async function loadSchedule() {
+  try {
+    const res = await fetch(`${API}/api/settings/schedule`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const tbody = document.getElementById('schedule-tbody');
+    if (!data.schedule || data.schedule.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted);padding:12px 0;">No schedule configured.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.schedule.map(e => `
+      <tr>
+        <td>${e.day}</td>
+        <td style="font-family:'JetBrains Mono',monospace;">${e.start}</td>
+        <td style="font-family:'JetBrains Mono',monospace;">${e.end}</td>
+        <td><span class="tag tag-${e.mode}">${e.mode.toUpperCase()}</span></td>
+      </tr>`).join('');
+  } catch (e) {}
+}
+
+/* =============================================================
+   EVENT LOG
+   ============================================================= */
+async function loadEvents() {
+  const type = document.getElementById('filter-type').value;
+  const mode = document.getElementById('filter-mode').value;
+  const ack  = document.getElementById('filter-ack').value;
+
+  let url = `${API}/api/events/?page=${eventsPage}&page_size=15`;
+  if (type) url += `&event_type=${type}`;
+  if (mode) url += `&mode=${mode}`;
+  if (ack !== '') url += `&acknowledged=${ack}`;
+
+  const tbody = document.getElementById('events-tbody');
+  tbody.innerHTML = '<tr><td colspan="8" style="color:var(--text-muted);text-align:center;padding:20px;">Loading…</td></tr>';
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Failed');
+    const data = await res.json();
+    eventsTotal = data.total;
+
+    document.getElementById('events-count').textContent =
+      `${data.total} total event${data.total !== 1 ? 's' : ''}`;
+    document.getElementById('page-label').textContent = `Page ${eventsPage}`;
+    document.getElementById('btn-prev').disabled = eventsPage <= 1;
+    document.getElementById('btn-next').disabled = eventsPage * 15 >= eventsTotal;
+
+    if (!data.items || data.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" style="color:var(--text-muted);text-align:center;padding:20px;">No events found.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = data.items.map(ev => {
+      const snapBtn = ev.snapshot_path
+        ? `<button class="btn-ack" onclick="openModal('/${ev.snapshot_path}','${fmtType(ev.event_type)}','')">📷</button>`
+        : '—';
+      const ackBtn = !ev.acknowledged
+        ? `<button class="btn-ack" onclick="acknowledgeEvent(${ev.id},this)">Ack</button>`
+        : '✔';
+      return `
+        <tr>
+          <td style="font-family:'JetBrains Mono',monospace;color:var(--text-muted);">#${ev.id}</td>
+          <td>${EVENT_ICONS[ev.event_type] || ''} ${fmtType(ev.event_type)}</td>
+          <td><span class="tag tag-${ev.mode}">${ev.mode.toUpperCase()}</span></td>
+          <td>${ev.camera_id}</td>
+          <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+              title="${ev.description || ''}">${ev.description || '—'}</td>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;">${fmtTime(ev.created_at)}</td>
+          <td>${ev.acknowledged
+            ? '<span class="tag tag-acked">Acked</span>'
+            : '<span class="tag tag-open">Open</span>'}</td>
+          <td style="display:flex;gap:6px;">${snapBtn} ${ackBtn}</td>
+        </tr>`;
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="8" style="color:var(--accent-red);text-align:center;padding:20px;">Failed to load events.</td></tr>`;
+  }
+}
+
+function changePage(delta) {
+  const newPage = eventsPage + delta;
+  if (newPage < 1) return;
+  if ((newPage - 1) * 15 >= eventsTotal && delta > 0) return;
+  eventsPage = newPage;
+  loadEvents();
+}
+
+async function acknowledgeEvent(eventId, btn) {
+  try {
+    const res = await fetch(`${API}/api/events/${eventId}/acknowledge`, { method: 'POST' });
+    if (!res.ok) throw new Error();
+    if (btn) { btn.textContent = '✔'; btn.disabled = true; }
+    showToast('Event acknowledged', 'success');
+    loadStats();
+  } catch (e) {
+    showToast('Failed to acknowledge', 'error');
+  }
+}
+
+/* =============================================================
+   FACE REGISTRY
+   ============================================================= */
+async function loadFaces() {
+  const grid = document.getElementById('faces-grid');
+  grid.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem;">Loading…</div>';
+  try {
+    const res = await fetch(`${API}/api/faces/`);
+    if (!res.ok) throw new Error();
+    const faces = await res.json();
+
+    document.getElementById('stat-faces').textContent = faces.length;
+
+    if (!faces.length) {
+      grid.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem;">No faces registered yet.</div>';
+      return;
+    }
+
+    grid.innerHTML = faces.map(f => {
+      const roleClass = f.role;
+      const photoHtml = f.photo_path
+        ? `<img class="face-avatar" src="/${f.photo_path}" alt="${f.name}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/>`
+        : '';
+      const placeholderHtml = `<div class="face-avatar-placeholder" ${f.photo_path ? 'style="display:none"' : ''}>
+          ${f.name.charAt(0).toUpperCase()}</div>`;
+
+      return `
+        <div class="face-card" id="face-card-${f.id}">
+          <button class="face-delete-btn" onclick="deleteFace(${f.id})" title="Remove">✕</button>
+          ${photoHtml}${placeholderHtml}
+          <div class="face-name">${escHtml(f.name)}</div>
+          <div class="face-id">${f.student_id || '—'}</div>
+          <span class="face-role-badge ${roleClass}">${f.role}</span>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    grid.innerHTML = '<div style="color:var(--accent-red);font-size:0.8rem;">Failed to load faces.</div>';
+  }
+}
+
+async function registerFace(e) {
+  e.preventDefault();
+  const name  = document.getElementById('reg-name').value.trim();
+  const sid   = document.getElementById('reg-id').value.trim();
+  const role  = document.getElementById('reg-role').value;
+  const photo = document.getElementById('reg-photo').files[0];
+
+  if (!name)  { showToast('Name is required', 'error'); return; }
+  if (!photo) { showToast('Photo is required', 'error'); return; }
+
+  const btn = document.getElementById('btn-register');
+  btn.disabled = true;
+  btn.textContent = 'Uploading…';
+
+  const fd = new FormData();
+  fd.append('name', name);
+  fd.append('role', role);
+  fd.append('photo', photo);
+  if (sid) fd.append('student_id', sid);
+
+  try {
+    const res = await fetch(`${API}/api/faces/register`, { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Registration failed');
+    showToast(`✔ ${name} registered successfully`, 'success');
+    resetRegForm();
+    loadFaces();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      Register Face`;
+  }
+}
+
+async function deleteFace(id) {
+  if (!confirm('Remove this face from the registry?')) return;
+  try {
+    const res = await fetch(`${API}/api/faces/${id}`, { method: 'DELETE' });
+    if (res.status === 204) {
+      document.getElementById(`face-card-${id}`)?.remove();
+      showToast('Face removed', 'info');
+      loadStats();
+    } else {
+      throw new Error();
+    }
+  } catch (e) {
+    showToast('Failed to delete face', 'error');
+  }
+}
+
+function previewPhoto(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const preview = document.getElementById('photo-preview');
+    preview.src = e.target.result;
+    preview.style.display = 'block';
+    document.getElementById('drop-icon').style.display = 'none';
+    document.getElementById('drop-text').textContent = file.name;
+  };
+  reader.readAsDataURL(file);
+}
+
+function resetRegForm() {
+  document.getElementById('register-form').reset();
+  const preview = document.getElementById('photo-preview');
+  preview.src = '';
+  preview.style.display = 'none';
+  document.getElementById('drop-icon').style.display = 'block';
+  document.getElementById('drop-text').textContent = 'Drop a photo here or click to browse';
+}
+
+// Drag-and-drop styling
+document.addEventListener('DOMContentLoaded', () => {
+  const zone = document.getElementById('file-drop-zone');
+  if (!zone) return;
+  zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      const input = document.getElementById('reg-photo');
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+      previewPhoto(input);
+    }
+  });
+});
+
+/* =============================================================
+   MODAL
+   ============================================================= */
+function openModal(src, title, desc) {
+  document.getElementById('modal-image').src = src;
+  document.getElementById('modal-title').textContent = title || 'Snapshot';
+  document.getElementById('modal-desc').textContent  = desc || '';
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('open');
+  document.getElementById('modal-image').src = '';
+}
+
+/* =============================================================
+   TOASTS
+   ============================================================= */
+function showToast(message, type = 'info', duration = 4000) {
+  const container = document.getElementById('toast-container');
+  const icons = { success: '✔', error: '✕', info: 'ℹ' };
+  const colors = { success: 'var(--accent-green)', error: 'var(--accent-red)', info: 'var(--accent-blue)' };
+
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `<span style="color:${colors[type]};font-size:1rem;">${icons[type]}</span><span>${message}</span>`;
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(8px)';
+    toast.style.transition = 'all 0.3s ease';
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+/* =============================================================
+   HELPERS
+   ============================================================= */
+function fmtType(type) {
+  return (type || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function fmtTime(ts) {
+  if (!ts) return '—';
+  try {
+    const d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch { return ts; }
+}
+
+function escHtml(str) {
+  return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function clearPlaceholder(container) {
+  const ph = container.querySelector('[style*="color:var(--text-muted)"]');
+  if (ph) ph.remove();
+}

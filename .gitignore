@@ -1,0 +1,57 @@
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# ── Virtual environment ────────────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── Environment / secrets ─────────────────────────────────────
+.env
+!.env.example
+
+# ── Model weights (large binary files) ────────────────────────
+models/
+*.pt
+*.onnx
+
+# ── Media / snapshots (runtime generated) ─────────────────────
+media/snapshots/
+media/clips/
+media/photos/
+media/uploads/
+
+# ── Model zip archives ─────────────────────────────────────────
+*.zip
+
+# ── Database ──────────────────────────────────────────────────
+*.db
+*.sqlite3
+
+# ── Docker ────────────────────────────────────────────────────
+.docker/
+
+# ── IDE ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── OS ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+logs/

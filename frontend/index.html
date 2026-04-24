@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Campus Eye — Security Monitoring Dashboard</title>
+  <meta name="description" content="Real-time campus CCTV monitoring with face recognition, behavioral analysis, and instant alerting." />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<div class="app-shell">
+
+  <!-- ── Header ──────────────────────────────────────────────── -->
+  <header class="header">
+    <div class="header-logo">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M2 12C2 12 5 5 12 5s10 7 10 7-3 7-10 7S2 12 2 12z"/>
+      </svg>
+      Campus Eye
+    </div>
+    <div class="header-right">
+      <div class="ws-status">
+        <div class="ws-dot" id="ws-dot"></div>
+        <span id="ws-label">Connecting…</span>
+      </div>
+      <div class="mode-badge normal" id="mode-badge" onclick="toggleMode()">
+        <span class="dot"></span>
+        <span id="mode-text">NORMAL MODE</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Sidebar ─────────────────────────────────────────────── -->
+  <nav class="sidebar">
+    <div class="nav-section-label">Monitoring</div>
+    <a class="nav-item active" data-panel="live" onclick="showPanel('live', this)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      Live Feed
+    </a>
+    <a class="nav-item" data-panel="alerts" onclick="showPanel('alerts', this)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      Alerts
+      <span id="alert-badge" style="margin-left:auto;background:var(--accent-red);color:#fff;border-radius:999px;padding:1px 7px;font-size:0.65rem;display:none">0</span>
+    </a>
+    <a class="nav-item" data-panel="events" onclick="showPanel('events', this)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Event Log
+    </a>
+
+    <div class="nav-section-label">Management</div>
+    <a class="nav-item" data-panel="faces" onclick="showPanel('faces', this)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      Face Registry
+    </a>
+    <a class="nav-item" data-panel="settings" onclick="showPanel('settings', this)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93A10 10 0 1 0 4.93 19.07 10 10 0 0 0 19.07 4.93z"/></svg>
+      Settings
+    </a>
+  </nav>
+
+  <!-- ── Main ────────────────────────────────────────────────── -->
+  <main class="main">
+
+    <!-- Stats row (always visible) -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-label">Registered Faces</div>
+        <div class="stat-value blue" id="stat-faces">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Events Today</div>
+        <div class="stat-value amber" id="stat-events">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Unacknowledged</div>
+        <div class="stat-value red" id="stat-unack">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Current Mode</div>
+        <div class="stat-value green" id="stat-mode">—</div>
+      </div>
+    </div>
+
+    <!-- ── Panel: Live Feed ──────────────────────────────────── -->
+    <div class="panel active" id="panel-live">
+      <div class="card">
+        <div class="card-title">📹 Live Camera Feed</div>
+        <div class="feed-wrapper">
+          <img id="live-feed" src="/api/stream/snapshot" alt="Live feed" />
+          <div class="feed-overlay">
+            <div class="feed-tag" id="feed-cam-tag">CAM 01</div>
+            <div class="feed-tag" id="feed-fps-tag">— FPS</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🔔 Recent Alerts</div>
+        <div class="alert-list" id="recent-alerts">
+          <div style="color:var(--text-muted);font-size:0.8rem;padding:12px 0;">No alerts yet.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📡 Video Source</div>
+
+        <!-- Current source status -->
+        <div id="source-status" style="display:flex;align-items:center;gap:10px;margin-bottom:16px;
+             padding:10px 14px;background:rgba(255,255,255,0.04);border-radius:8px;font-size:0.8rem;">
+          <div class="ws-dot" id="source-dot"></div>
+          <span id="source-label" style="color:var(--text-secondary);">Detecting source…</span>
+        </div>
+
+        <!-- Upload a video file -->
+        <div style="margin-bottom:18px;">
+          <div class="form-label" style="margin-bottom:8px;">📂 Upload Video File</div>
+          <label id="upload-label" style="display:flex;align-items:center;gap:10px;padding:10px 14px;
+                 background:rgba(255,255,255,0.05);border:1px dashed rgba(255,255,255,0.15);
+                 border-radius:8px;cursor:pointer;font-size:0.8rem;color:var(--text-secondary);transition:all 0.2s;">
+            <span style="font-size:1.2rem;">📂</span>
+            <span id="upload-label-text">Click to select a video file — upload starts automatically</span>
+            <input type="file" id="upload-file" accept="video/*,.mp4,.avi,.mov,.mkv,.webm"
+                   style="display:none;" onchange="uploadVideo()" />
+          </label>
+          <div id="upload-progress" style="display:none;margin-top:8px;font-size:0.75rem;color:var(--text-muted);
+               padding:8px 12px;background:rgba(255,255,255,0.03);border-radius:6px;"></div>
+        </div>
+
+        <!-- RTSP / webcam URL -->
+        <div style="margin-bottom:18px;">
+          <div class="form-label" style="margin-bottom:8px;">🔗 RTSP / Webcam URL</div>
+          <div style="display:flex;gap:10px;">
+            <input id="rtsp-url" class="form-input" type="text"
+                   placeholder="rtsp://user:pass@ip:554/stream  or  0  for webcam"
+                   style="flex:1;" />
+            <button class="btn btn-ghost" onclick="setRtspSource()" style="padding:8px 14px;font-size:0.8rem;white-space:nowrap;">Apply</button>
+          </div>
+        </div>
+
+        <!-- Previously uploaded files -->
+        <div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <div class="form-label">🗂 Previous Uploads</div>
+            <button class="btn btn-ghost" onclick="loadUploads()" style="font-size:0.72rem;padding:4px 10px;">↻</button>
+          </div>
+          <div id="uploads-list" style="display:flex;flex-direction:column;gap:6px;font-size:0.78rem;max-height:180px;overflow-y:auto;">
+            <div style="color:var(--text-muted);">Loading…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Panel: Alerts ─────────────────────────────────────── -->
+    <div class="panel" id="panel-alerts">
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <div class="card-title" style="margin-bottom:0">🔔 Alert Feed</div>
+          <button class="btn btn-ghost" onclick="clearAlerts()" style="font-size:0.75rem;padding:6px 12px;">Clear All</button>
+        </div>
+        <div class="alert-list" id="all-alerts" style="max-height:600px;">
+          <div style="color:var(--text-muted);font-size:0.8rem;padding:12px 0;">No alerts yet.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Panel: Event Log ──────────────────────────────────── -->
+    <div class="panel" id="panel-events">
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+          <div class="card-title" style="margin-bottom:0">📋 Event Log</div>
+          <select class="form-select" id="filter-type" onchange="loadEvents()" style="width:160px;padding:6px 10px;">
+            <option value="">All Types</option>
+            <option value="loitering">Loitering</option>
+            <option value="unknown_face">Unknown Face</option>
+            <option value="vandalism">Vandalism</option>
+            <option value="littering">Littering</option>
+            <option value="foreign_object">Foreign Object</option>
+            <option value="head_swiveling">Head Swiveling</option>
+            <option value="hand_interaction">Hand Interaction</option>
+            <option value="talking">Talking</option>
+          </select>
+          <select class="form-select" id="filter-mode" onchange="loadEvents()" style="width:130px;padding:6px 10px;">
+            <option value="">All Modes</option>
+            <option value="normal">Normal</option>
+            <option value="exam">Exam</option>
+          </select>
+          <select class="form-select" id="filter-ack" onchange="loadEvents()" style="width:150px;padding:6px 10px;">
+            <option value="">All Statuses</option>
+            <option value="false">Unacknowledged</option>
+            <option value="true">Acknowledged</option>
+          </select>
+          <button class="btn btn-ghost" onclick="loadEvents()" style="font-size:0.75rem;padding:6px 12px;">↻ Refresh</button>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="data-table" id="events-table">
+            <thead>
+              <tr>
+                <th>ID</th><th>Type</th><th>Mode</th><th>Camera</th>
+                <th>Description</th><th>Time</th><th>Status</th><th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="events-tbody">
+              <tr><td colspan="8" style="color:var(--text-muted);text-align:center;padding:20px;">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:16px;">
+          <span style="font-size:0.75rem;color:var(--text-muted)" id="events-count">—</span>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost" id="btn-prev" onclick="changePage(-1)" style="padding:6px 14px;font-size:0.75rem;">← Prev</button>
+            <span style="font-size:0.75rem;color:var(--text-muted);align-self:center;" id="page-label">Page 1</span>
+            <button class="btn btn-ghost" id="btn-next" onclick="changePage(1)" style="padding:6px 14px;font-size:0.75rem;">Next →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Panel: Face Registry ──────────────────────────────── -->
+    <div class="panel" id="panel-faces">
+      <div class="card">
+        <div class="card-title">➕ Register New Face</div>
+        <form id="register-form" class="register-form" onsubmit="registerFace(event)">
+          <div class="form-group">
+            <label class="form-label">Full Name *</label>
+            <input id="reg-name" class="form-input" type="text" placeholder="e.g. Alice Johnson" required />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Student / Staff ID</label>
+            <input id="reg-id" class="form-input" type="text" placeholder="e.g. STU001" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Role *</label>
+            <select id="reg-role" class="form-select">
+              <option value="student">Student</option>
+              <option value="invigilator">Invigilator</option>
+              <option value="staff">Staff</option>
+            </select>
+          </div>
+          <div class="form-group"></div>
+
+          <div class="file-drop full" id="file-drop-zone">
+            <input type="file" id="reg-photo" accept="image/jpeg,image/png" onchange="previewPhoto(this)" />
+            <img id="photo-preview" class="photo-preview" alt="Preview" />
+            <div class="file-drop-icon" id="drop-icon">📷</div>
+            <div class="file-drop-text" id="drop-text">Drop a photo here or click to browse</div>
+            <div class="file-drop-sub">Clear frontal face — JPEG or PNG</div>
+          </div>
+
+          <div class="form-group full" style="flex-direction:row;gap:12px;justify-content:flex-end;">
+            <button type="reset" class="btn btn-ghost" onclick="resetRegForm()">Reset</button>
+            <button type="submit" class="btn btn-primary" id="btn-register">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              Register Face
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+          <div class="card-title" style="margin-bottom:0">👤 Registered Faces</div>
+          <button class="btn btn-ghost" onclick="loadFaces()" style="font-size:0.75rem;padding:6px 12px;">↻ Refresh</button>
+        </div>
+        <div class="faces-grid" id="faces-grid">
+          <div style="color:var(--text-muted);font-size:0.8rem;">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Panel: Settings ──────────────────────────────────── -->
+    <div class="panel" id="panel-settings">
+      <div class="card">
+        <div class="card-title">⚙️ Mode Control</div>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="setMode('normal')" id="btn-normal">Set Normal Mode</button>
+          <button class="btn btn-danger"  onclick="setMode('exam')"   id="btn-exam">Set Exam Mode</button>
+          <div style="font-size:0.8rem;color:var(--text-secondary);">
+            Current: <span id="settings-mode-label" style="font-weight:600;color:var(--text-primary)">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📅 Exam Schedule</div>
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:16px;">
+          The system will automatically switch to Exam Mode during scheduled exam periods.
+        </p>
+        <table class="schedule-table" id="schedule-table">
+          <thead>
+            <tr><th>Day</th><th>Start</th><th>End</th><th>Mode</th></tr>
+          </thead>
+          <tbody id="schedule-tbody">
+            <tr><td colspan="4" style="color:var(--text-muted);padding:12px 0;">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-title">ℹ️ System Info</div>
+        <table class="data-table">
+          <tbody>
+            <tr><td style="color:var(--text-muted)">API Version</td><td>1.0.0</td></tr>
+            <tr><td style="color:var(--text-muted)">WebSocket</td><td id="info-ws">—</td></tr>
+            <tr><td style="color:var(--text-muted)">API Base</td><td id="info-api" style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;"></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ── Modal (snapshot preview) ─────────────────────────────── -->
+<div id="modal-overlay" onclick="closeModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">Snapshot</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <img id="modal-image" src="" alt="Event snapshot" />
+    <p id="modal-desc" style="margin-top:12px;font-size:0.8rem;color:var(--text-secondary);"></p>
+  </div>
+</div>
+
+<!-- ── Toast container ───────────────────────────────────────── -->
+<div id="toast-container"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
