@@ -176,10 +176,16 @@
             <option value="unknown_face">Unknown Face</option>
             <option value="vandalism">Vandalism</option>
             <option value="littering">Littering</option>
+            <option value="weapon">Weapon</option>
+            <option value="vehicle_intrusion">Vehicle Intrusion</option>
+            <option value="overcrowding">Overcrowding</option>
+            <option value="alcohol">Alcohol</option>
             <option value="foreign_object">Foreign Object</option>
             <option value="head_swiveling">Head Swiveling</option>
             <option value="hand_interaction">Hand Interaction</option>
             <option value="talking">Talking</option>
+            <option value="drink_in_exam">Drink in Exam</option>
+            <option value="crowd_cheat">Crowd Cheat</option>
           </select>
           <select class="form-select" id="filter-mode" onchange="loadEvents()" style="width:130px;padding:6px 10px;">
             <option value="">All Modes</option>
@@ -192,6 +198,14 @@
             <option value="true">Acknowledged</option>
           </select>
           <button class="btn btn-ghost" onclick="loadEvents()" style="font-size:0.75rem;padding:6px 12px;">↻ Refresh</button>
+          <div style="margin-left:auto;display:flex;gap:6px;">
+            <button class="btn btn-ghost" onclick="clearEventLog(false)" style="font-size:0.75rem;padding:6px 12px;color:var(--accent-red);border-color:rgba(239,68,68,0.3);">
+              🗑 Clear All
+            </button>
+            <button class="btn btn-ghost" onclick="clearEventLog(true)" style="font-size:0.75rem;padding:6px 12px;">
+              🗑 Clear Acknowledged
+            </button>
+          </div>
         </div>
         <div style="overflow-x:auto;">
           <table class="data-table" id="events-table">
@@ -221,7 +235,9 @@
     <div class="panel" id="panel-faces">
       <div class="card">
         <div class="card-title">➕ Register New Face</div>
-        <form id="register-form" class="register-form" onsubmit="registerFace(event)">
+
+        <!-- Common fields -->
+        <div class="register-form" id="reg-common-fields">
           <div class="form-group">
             <label class="form-label">Full Name *</label>
             <input id="reg-name" class="form-input" type="text" placeholder="e.g. Alice Johnson" required />
@@ -239,7 +255,17 @@
             </select>
           </div>
           <div class="form-group"></div>
+        </div>
 
+        <!-- Tab switcher -->
+        <div style="display:flex;gap:4px;margin:16px 0 20px;border-bottom:1px solid rgba(255,255,255,0.08);">
+          <button class="reg-tab active" id="tab-photo"  onclick="switchRegTab('photo')">📷 Photo</button>
+          <button class="reg-tab"        id="tab-clip"   onclick="switchRegTab('clip')">🎬 Video Clip</button>
+          <button class="reg-tab"        id="tab-webcam" onclick="switchRegTab('webcam')">📹 Webcam</button>
+        </div>
+
+        <!-- Tab: Photo -->
+        <div id="reg-tab-photo">
           <div class="file-drop full" id="file-drop-zone">
             <input type="file" id="reg-photo" accept="image/jpeg,image/png" onchange="previewPhoto(this)" />
             <img id="photo-preview" class="photo-preview" alt="Preview" />
@@ -247,15 +273,67 @@
             <div class="file-drop-text" id="drop-text">Drop a photo here or click to browse</div>
             <div class="file-drop-sub">Clear frontal face — JPEG or PNG</div>
           </div>
-
-          <div class="form-group full" style="flex-direction:row;gap:12px;justify-content:flex-end;">
-            <button type="reset" class="btn btn-ghost" onclick="resetRegForm()">Reset</button>
-            <button type="submit" class="btn btn-primary" id="btn-register">
+          <div style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">
+            <button type="button" class="btn btn-ghost" onclick="resetRegForm()">Reset</button>
+            <button type="button" class="btn btn-primary" id="btn-register-photo" onclick="registerFacePhoto()">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
               Register Face
             </button>
           </div>
-        </form>
+        </div>
+
+        <!-- Tab: Video Clip -->
+        <div id="reg-tab-clip" style="display:none;">
+          <div style="background:rgba(99,179,237,0.08);border:1px solid rgba(99,179,237,0.2);border-radius:10px;padding:14px 18px;margin-bottom:18px;font-size:0.8rem;color:var(--text-secondary);line-height:1.6;">
+            📋 <strong style="color:var(--text-primary)">Instructions:</strong> Record a 5–10 second clip of the person
+            slowly turning their head <strong>left → centre → right → centre</strong>.
+            Ensure good lighting and keep your face fully in frame.
+          </div>
+          <label id="clip-drop-zone" style="display:flex;align-items:center;gap:14px;padding:20px;background:rgba(255,255,255,0.04);border:2px dashed rgba(255,255,255,0.15);border-radius:10px;cursor:pointer;transition:all 0.2s;margin-bottom:16px;">
+            <span style="font-size:2rem;">🎬</span>
+            <div>
+              <div id="clip-label-text" style="font-size:0.85rem;color:var(--text-primary);font-weight:500;">Click to select a video clip</div>
+              <div style="font-size:0.75rem;color:var(--text-muted);margin-top:3px;">MP4, AVI, MOV, MKV, WebM — max 30s recommended</div>
+            </div>
+            <input type="file" id="reg-clip" accept="video/*,.mp4,.avi,.mov,.mkv,.webm" style="display:none;" onchange="onClipSelected(this)" />
+          </label>
+          <div id="clip-progress" style="display:none;margin-bottom:12px;font-size:0.78rem;color:var(--text-muted);padding:10px 14px;background:rgba(255,255,255,0.04);border-radius:8px;"></div>
+          <div style="display:flex;gap:12px;justify-content:flex-end;">
+            <button type="button" class="btn btn-ghost" onclick="resetRegForm()">Reset</button>
+            <button type="button" class="btn btn-primary" id="btn-register-clip" onclick="registerFaceClip()" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              Register from Clip
+            </button>
+          </div>
+        </div>
+
+        <!-- Tab: Webcam -->
+        <div id="reg-tab-webcam" style="display:none;">
+          <div style="background:rgba(99,179,237,0.08);border:1px solid rgba(99,179,237,0.2);border-radius:10px;padding:14px 18px;margin-bottom:18px;font-size:0.8rem;color:var(--text-secondary);line-height:1.6;">
+            📋 <strong style="color:var(--text-primary)">Instructions:</strong> Click <em>Start Capture</em>, then slowly
+            turn your head <strong>left → centre → right → centre</strong>. Frames are captured automatically every 0.5s.
+            Click <em>Stop &amp; Register</em> when done.
+          </div>
+          <div style="position:relative;width:100%;max-width:480px;margin:0 auto 18px;border-radius:10px;overflow:hidden;background:#000;">
+            <video id="webcam-video" autoplay playsinline muted style="width:100%;display:block;"></video>
+            <div id="webcam-overlay" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:rgba(0,0,0,0.6);">
+              <div style="font-size:2.5rem;">📹</div>
+              <div style="font-size:0.82rem;color:#fff;">Camera not started</div>
+            </div>
+            <div id="webcam-frame-count" style="position:absolute;top:10px;right:12px;background:rgba(0,0,0,0.6);color:#fff;font-size:0.72rem;padding:3px 9px;border-radius:999px;display:none;">0 frames</div>
+            <div id="webcam-rec-dot" style="position:absolute;top:10px;left:12px;display:none;align-items:center;gap:6px;">
+              <span style="width:8px;height:8px;border-radius:50%;background:#f56565;display:inline-block;animation:pulse 1s infinite;"></span>
+              <span style="font-size:0.7rem;color:#fff;font-weight:600;">REC</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;justify-content:center;margin-bottom:10px;">
+            <button type="button" class="btn btn-primary" id="btn-webcam-start" onclick="startWebcamCapture()">▶ Start Capture</button>
+            <button type="button" class="btn btn-danger"  id="btn-webcam-stop"  onclick="stopWebcamCapture()" disabled>⏹ Stop &amp; Register</button>
+            <button type="button" class="btn btn-ghost"   id="btn-webcam-cancel" onclick="cancelWebcam()" style="display:none;">✕ Cancel</button>
+          </div>
+          <div id="webcam-status" style="text-align:center;font-size:0.78rem;color:var(--text-muted);min-height:20px;"></div>
+        </div>
+
       </div>
 
       <div class="card">

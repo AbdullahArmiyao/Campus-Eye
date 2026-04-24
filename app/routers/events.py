@@ -1,10 +1,13 @@
 """
 Campus Eye — Events Router
-GET  /api/events/              – paginated event log
-POST /api/events/{id}/acknowledge – mark event as seen
+GET    /api/events/                   – paginated event log
+POST   /api/events/{id}/acknowledge   – mark event as seen
+DELETE /api/events/                   – clear all events (optional: ?acknowledged_only=true)
+DELETE /api/events/{id}               – delete a single event
 """
 import logging
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -43,11 +46,9 @@ async def list_events(
     if since:
         q = q.where(Event.created_at >= since)
 
-    # Total count
     count_q = select(func.count()).select_from(q.subquery())
     total = (await db.execute(count_q)).scalar_one()
 
-    # Paginate
     q = q.offset((page - 1) * page_size).limit(page_size)
     items = (await db.execute(q)).scalars().all()
 
@@ -72,3 +73,45 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     if not event:
         raise HTTPException(404, f"Event {event_id} not found.")
     return event
+
+
+@router.delete("/", status_code=200)
+async def clear_events(
+    acknowledged_only: bool = Query(False, description="Only delete already-acknowledged events"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete events from the database and their associated snapshot/clip files.
+    Pass ?acknowledged_only=true to only remove events already marked as seen.
+    """
+    q = select(Event)
+    if acknowledged_only:
+        q = q.where(Event.acknowledged == True)  # noqa: E712
+    events = (await db.execute(q)).scalars().all()
+
+    deleted = 0
+    for ev in events:
+        for path_attr in (ev.snapshot_path, ev.clip_path):
+            if path_attr:
+                Path(path_attr).unlink(missing_ok=True)
+        await db.delete(ev)
+        deleted += 1
+
+    await db.commit()
+    logger.info(f"Cleared {deleted} event(s) (acknowledged_only={acknowledged_only})")
+    return {"deleted": deleted, "message": f"{deleted} event(s) cleared."}
+
+
+@router.delete("/{event_id}", status_code=200)
+async def delete_event(event_id: int, db: AsyncSession = Depends(get_db)):
+    """Delete a single event and its associated snapshot/clip files."""
+    event = await db.get(Event, event_id)
+    if not event:
+        raise HTTPException(404, f"Event {event_id} not found.")
+    for path_attr in (event.snapshot_path, event.clip_path):
+        if path_attr:
+            Path(path_attr).unlink(missing_ok=True)
+    await db.delete(event)
+    await db.commit()
+    logger.info(f"Deleted event {event_id}.")
+    return {"deleted": event_id, "message": f"Event {event_id} deleted."}

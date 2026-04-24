@@ -266,14 +266,19 @@ class BehaviorAnalyzer:
             # First frame, or source changed resolution — reset baseline
             self._prev_gray = gray
             return False
-        flow = cv2.calcOpticalFlowFarneback(
-            self._prev_gray, gray, None,
-            pyr_scale=0.5, levels=3, winsize=15,
-            iterations=3, poly_n=5, poly_sigma=1.2, flags=0,
-        )
-        mag = np.mean(np.sqrt(flow[..., 0] ** 2 + flow[..., 1] ** 2))
-        self._prev_gray = gray
-        return float(mag) > self._motion_threshold * 50
+        try:
+            flow = cv2.calcOpticalFlowFarneback(
+                self._prev_gray, gray, None,
+                pyr_scale=0.5, levels=3, winsize=15,
+                iterations=3, poly_n=5, poly_sigma=1.2, flags=0,
+            )
+            mag = np.mean(np.sqrt(flow[..., 0] ** 2 + flow[..., 1] ** 2))
+            self._prev_gray = gray
+            return float(mag) > self._motion_threshold * 50
+        except cv2.error:
+            # Frame dimensions changed mid-stream (e.g. video source switched) — reset
+            self._prev_gray = gray
+            return False
 
 
     def _detect_hand_interactions(

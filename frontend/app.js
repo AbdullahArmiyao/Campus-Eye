@@ -21,14 +21,20 @@ let fpsFrameCount = 0;
 
 /* ── Icons per event type ───────────────────────────────────── */
 const EVENT_ICONS = {
-  loitering:        '🚶',
-  littering:        '🗑️',
-  vandalism:        '💥',
-  unknown_face:     '👤',
-  foreign_object:   '📱',
-  head_swiveling:   '👀',
-  talking:          '💬',
-  hand_interaction: '🤝',
+  loitering:          '🚶',
+  littering:          '🗑️',
+  vandalism:          '💥',
+  unknown_face:       '👤',
+  weapon:             '🔪',
+  vehicle_intrusion:  '🚲',
+  overcrowding:       '👥',
+  alcohol:            '🍺',
+  foreign_object:     '📱',
+  head_swiveling:     '👀',
+  talking:            '💬',
+  hand_interaction:   '🤝',
+  drink_in_exam:      '🥤',
+  crowd_cheat:        '🤔',
 };
 
 /* =============================================================
@@ -499,6 +505,24 @@ function changePage(delta) {
   loadEvents();
 }
 
+async function clearEventLog(acknowledgedOnly = false) {
+  const label = acknowledgedOnly ? 'acknowledged events' : 'ALL events';
+  if (!confirm(`This will permanently delete ${label} and their snapshots. Continue?`)) return;
+  try {
+    const url = `${API}/api/events/?acknowledged_only=${acknowledgedOnly}`;
+    const res  = await fetch(url, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to clear events');
+    showToast(`🗑 ${data.message}`, 'success');
+    eventsPage = 1;
+    loadEvents();
+    loadStats();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+
 async function acknowledgeEvent(eventId, btn) {
   try {
     const res = await fetch(`${API}/api/events/${eventId}/acknowledge`, { method: 'POST' });
@@ -551,41 +575,246 @@ async function loadFaces() {
   }
 }
 
-async function registerFace(e) {
-  e.preventDefault();
+/* ────────────────────────────────────────────────────────────
+   FACE REGISTRY — Registration Tab Logic
+   ============================================================= */
+
+// State for webcam
+let _webcamStream  = null;
+let _webcamFrames  = [];     // base64 JPEG strings
+let _webcamTimer   = null;
+let _selectedClip  = null;
+
+function switchRegTab(tab) {
+  ['photo', 'clip', 'webcam'].forEach(t => {
+    document.getElementById(`reg-tab-${t}`).style.display = t === tab ? '' : 'none';
+    document.getElementById(`tab-${t}`).classList.toggle('active', t === tab);
+  });
+  // Cancel webcam if switching away
+  if (tab !== 'webcam') cancelWebcam();
+}
+
+// ── Photo tab ────────────────────────────────────────────────
+async function registerFacePhoto() {
   const name  = document.getElementById('reg-name').value.trim();
   const sid   = document.getElementById('reg-id').value.trim();
   const role  = document.getElementById('reg-role').value;
   const photo = document.getElementById('reg-photo').files[0];
-
   if (!name)  { showToast('Name is required', 'error'); return; }
-  if (!photo) { showToast('Photo is required', 'error'); return; }
+  if (!photo) { showToast('Select a photo first', 'error'); return; }
 
-  const btn = document.getElementById('btn-register');
-  btn.disabled = true;
-  btn.textContent = 'Uploading…';
+  const btn = document.getElementById('btn-register-photo');
+  btn.disabled = true; btn.textContent = 'Uploading…';
 
   const fd = new FormData();
-  fd.append('name', name);
-  fd.append('role', role);
-  fd.append('photo', photo);
+  fd.append('name', name); fd.append('role', role); fd.append('photo', photo);
   if (sid) fd.append('student_id', sid);
 
   try {
-    const res = await fetch(`${API}/api/faces/register`, { method: 'POST', body: fd });
+    const res  = await fetch(`${API}/api/faces/register`, { method: 'POST', body: fd });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Registration failed');
-    showToast(`✔ ${name} registered successfully`, 'success');
-    resetRegForm();
-    loadFaces();
+    showToast(`✔ ${name} registered (photo)`, 'success');
+    resetRegForm(); loadFaces();
+  } catch (err) { showToast(err.message, 'error'); }
+  finally {
+    btn.disabled = false;
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Register Face`;
+  }
+}
+
+// ── Clip tab ─────────────────────────────────────────────────
+function onClipSelected(input) {
+  _selectedClip = input.files[0];
+  if (!_selectedClip) return;
+  document.getElementById('clip-label-text').textContent = `✔ ${_selectedClip.name}`;
+  document.getElementById('btn-register-clip').disabled = false;
+}
+
+async function registerFaceClip() {
+  const name = document.getElementById('reg-name').value.trim();
+  const sid  = document.getElementById('reg-id').value.trim();
+  const role = document.getElementById('reg-role').value;
+  if (!name)         { showToast('Name is required', 'error'); return; }
+  if (!_selectedClip){ showToast('Select a video clip first', 'error'); return; }
+
+  const btn  = document.getElementById('btn-register-clip');
+  const prog = document.getElementById('clip-progress');
+  btn.disabled = true; btn.textContent = 'Processing clip…';
+  prog.style.display = 'block';
+  prog.textContent = '⏳ Uploading clip and extracting face embeddings… (this may take 10–20s)';
+
+  const fd = new FormData();
+  fd.append('name', name); fd.append('role', role); fd.append('clip', _selectedClip);
+  if (sid) fd.append('student_id', sid);
+
+  try {
+    const res  = await fetch(`${API}/api/faces/register-clip`, { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Registration failed');
+    showToast(`✔ ${name} registered with ${data.message.match(/\d+/)?.[0] || 'multiple'} embeddings`, 'success');
+    prog.textContent = `✔ ${data.message}`;
+    resetRegForm(); loadFaces();
   } catch (err) {
     showToast(err.message, 'error');
+    prog.textContent = `✗ ${err.message}`;
   } finally {
     btn.disabled = false;
-    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-      Register Face`;
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Register from Clip`;
   }
+}
+
+// ── Webcam tab ───────────────────────────────────────────────
+async function startWebcamCapture() {
+  const statusEl = document.getElementById('webcam-status');
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    statusEl.textContent = '✗ Your browser does not support camera access. Try Chrome or Firefox.';
+    showToast('Camera API not supported in this browser', 'error');
+    return;
+  }
+
+  statusEl.textContent = 'Requesting camera access…';
+
+  try {
+    // Use plain { video: true } — no facingMode, more compatible on Linux/desktop
+    _webcamStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    const video = document.getElementById('webcam-video');
+    video.srcObject = _webcamStream;
+    document.getElementById('webcam-overlay').style.display  = 'none';
+    document.getElementById('webcam-rec-dot').style.display  = 'flex';
+    document.getElementById('webcam-frame-count').style.display = 'block';
+    document.getElementById('btn-webcam-start').disabled  = true;
+    document.getElementById('btn-webcam-stop').disabled   = false;
+    document.getElementById('btn-webcam-cancel').style.display = 'inline-flex';
+    statusEl.textContent = 'Capturing… slowly turn your head left → centre → right → centre';
+    _webcamFrames = [];
+
+    _webcamTimer = setInterval(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width  = video.videoWidth  || 640;
+      canvas.height = video.videoHeight || 480;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      _webcamFrames.push(canvas.toDataURL('image/jpeg', 0.85));
+      document.getElementById('webcam-frame-count').textContent = `${_webcamFrames.length} frames`;
+    }, 500);
+
+  } catch (err) {
+    let msg, hint;
+    if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+      msg  = 'Camera is already in use by another application.';
+      hint = '💡 The monitoring pipeline may be capturing from this webcam. ' +
+             'Go to <strong>Live Feed → Video Source</strong> and switch to a video file or RTSP stream, ' +
+             'then retry webcam registration.';
+    } else if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      msg  = 'Camera permission was denied.';
+      hint = '💡 Click the camera icon in your browser address bar, allow access, then retry.';
+    } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+      msg  = 'No camera device found.';
+      hint = '💡 Make sure a webcam is connected and recognised by your OS.';
+    } else {
+      msg  = err.message || 'Unknown camera error.';
+      hint = '💡 Ensure the camera is connected and not blocked by another application.';
+    }
+    statusEl.innerHTML =
+      `<span style="color:var(--accent-red);font-weight:600;">✗ ${msg}</span><br>` +
+      `<span style="color:var(--text-muted);font-size:0.73rem;line-height:1.6;">${hint}</span>`;
+    showToast(`Camera: ${msg}`, 'error');
+  }
+}
+
+async function stopWebcamCapture() {
+  clearInterval(_webcamTimer);
+  if (_webcamStream) { _webcamStream.getTracks().forEach(t => t.stop()); _webcamStream = null; }
+  document.getElementById('webcam-rec-dot').style.display  = 'none';
+  document.getElementById('btn-webcam-start').disabled  = false;
+  document.getElementById('btn-webcam-stop').disabled   = true;
+
+  const name = document.getElementById('reg-name').value.trim();
+  const sid  = document.getElementById('reg-id').value.trim();
+  const role = document.getElementById('reg-role').value;
+
+  if (!name) { showToast('Enter a name before capturing', 'error'); return; }
+  if (_webcamFrames.length < 2) {
+    showToast('Too few frames captured. Try again.', 'error');
+    document.getElementById('webcam-status').textContent = 'Not enough frames — try again.';
+    return;
+  }
+
+  document.getElementById('webcam-status').textContent =
+    `⏳ Sending ${_webcamFrames.length} frames for face embedding…`;
+  document.getElementById('btn-webcam-cancel').style.display = 'none';
+
+  const fd = new FormData();
+  fd.append('name', name); fd.append('role', role);
+  fd.append('frames', JSON.stringify(_webcamFrames));
+  if (sid) fd.append('student_id', sid);
+
+  try {
+    const res  = await fetch(`${API}/api/faces/register-webcam`, { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Registration failed');
+    showToast(`✔ ${name} registered via webcam`, 'success');
+    document.getElementById('webcam-status').textContent = `✔ ${data.message}`;
+    document.getElementById('webcam-overlay').style.display = 'flex';
+    document.getElementById('webcam-frame-count').style.display = 'none';
+    _webcamFrames = [];
+    resetRegForm(); loadFaces();
+  } catch (err) {
+    showToast(err.message, 'error');
+    document.getElementById('webcam-status').textContent = `✗ ${err.message}`;
+  }
+}
+
+function cancelWebcam() {
+  clearInterval(_webcamTimer);
+  if (_webcamStream) { _webcamStream.getTracks().forEach(t => t.stop()); _webcamStream = null; }
+  _webcamFrames = [];
+  const video = document.getElementById('webcam-video');
+  if (video) video.srcObject = null;
+  const overlay = document.getElementById('webcam-overlay'); if (overlay) overlay.style.display = 'flex';
+  const rec = document.getElementById('webcam-rec-dot');     if (rec) rec.style.display = 'none';
+  const cnt = document.getElementById('webcam-frame-count'); if (cnt) cnt.style.display = 'none';
+  const st  = document.getElementById('btn-webcam-start');   if (st) st.disabled = false;
+  const sp  = document.getElementById('btn-webcam-stop');    if (sp) sp.disabled = true;
+  const ca  = document.getElementById('btn-webcam-cancel');  if (ca) ca.style.display = 'none';
+  const ws  = document.getElementById('webcam-status');      if (ws) ws.textContent = '';
+}
+
+function resetRegForm() {
+  document.getElementById('reg-name').value = '';
+  document.getElementById('reg-id').value   = '';
+  document.getElementById('reg-role').value = 'student';
+  // Photo tab
+  const ph = document.getElementById('reg-photo'); if (ph) ph.value = '';
+  const preview = document.getElementById('photo-preview');
+  if (preview) { preview.src = ''; preview.style.display = 'none'; }
+  const di = document.getElementById('drop-icon'); if (di) di.style.display = 'block';
+  const dt = document.getElementById('drop-text'); if (dt) dt.textContent = 'Drop a photo here or click to browse';
+  // Clip tab
+  _selectedClip = null;
+  const ci = document.getElementById('reg-clip'); if (ci) ci.value = '';
+  const cl = document.getElementById('clip-label-text'); if (cl) cl.textContent = 'Click to select a video clip';
+  const cp = document.getElementById('clip-progress'); if (cp) cp.style.display = 'none';
+  const cb = document.getElementById('btn-register-clip'); if (cb) cb.disabled = true;
+  // Webcam tab
+  cancelWebcam();
+}
+
+function previewPhoto(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const preview = document.getElementById('photo-preview');
+    preview.src = e.target.result;
+    preview.style.display = 'block';
+    const di = document.getElementById('drop-icon');
+    const dt = document.getElementById('drop-text');
+    if (di) di.style.display = 'none';
+    if (dt) dt.textContent = file.name;
+  };
+  reader.readAsDataURL(file);
 }
 
 async function deleteFace(id) {
@@ -604,44 +833,18 @@ async function deleteFace(id) {
   }
 }
 
-function previewPhoto(input) {
-  const file = input.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const preview = document.getElementById('photo-preview');
-    preview.src = e.target.result;
-    preview.style.display = 'block';
-    document.getElementById('drop-icon').style.display = 'none';
-    document.getElementById('drop-text').textContent = file.name;
-  };
-  reader.readAsDataURL(file);
-}
-
-function resetRegForm() {
-  document.getElementById('register-form').reset();
-  const preview = document.getElementById('photo-preview');
-  preview.src = '';
-  preview.style.display = 'none';
-  document.getElementById('drop-icon').style.display = 'block';
-  document.getElementById('drop-text').textContent = 'Drop a photo here or click to browse';
-}
-
-// Drag-and-drop styling
+// Drag-and-drop for photo zone
 document.addEventListener('DOMContentLoaded', () => {
   const zone = document.getElementById('file-drop-zone');
   if (!zone) return;
   zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
   zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
   zone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    zone.classList.remove('drag-over');
+    e.preventDefault(); zone.classList.remove('drag-over');
     const file = e.dataTransfer.files[0];
     if (file) {
       const input = document.getElementById('reg-photo');
-      const dt = new DataTransfer();
-      dt.items.add(file);
-      input.files = dt.files;
+      const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files;
       previewPhoto(input);
     }
   });
