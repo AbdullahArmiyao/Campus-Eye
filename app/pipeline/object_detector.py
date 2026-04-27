@@ -134,6 +134,7 @@ class ObjectDetector:
             persist=True,
             conf=self._conf,
             classes=classes,
+            tracker="bytetrack.yaml",
             verbose=False,
         ) if track else self._model(frame, conf=self._conf, classes=classes, verbose=False)
 

@@ -45,10 +45,11 @@ docker compose up -d db redis
 source venv/bin/activate && alembic upgrade head
 
 # 5. Run
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python run.py
 
-# 6. Open
-# http://localhost:8000
+# 6. Access
+# Use the local IP address shown in the terminal (e.g., http://192.168.1.10:8000)
+# to access the dashboard from any device on the same network.
 ```
 
 ---

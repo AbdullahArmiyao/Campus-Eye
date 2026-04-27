@@ -97,6 +97,13 @@ class FrameProcessor:
                 await asyncio.sleep(0.1)
                 continue
 
+            # Ensure consistent frame size for detectors
+            h, w = frame.shape[:2]
+            target_w = self._capture._width
+            target_h = self._capture._height
+            if w != target_w or h != target_h:
+                frame = cv2.resize(frame, (target_w, target_h))
+
             try:
                 await self._process_frame(frame)
             except Exception as e:

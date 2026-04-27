@@ -88,3 +88,15 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 
 # ── Serve frontend static files (catch-all — must be last) ───────────────────
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    from app.config import get_settings
+    settings = get_settings()
+    uvicorn.run(
+        "app.main:app",
+        host=settings.app_host,
+        port=settings.app_port,
+        reload=True
+    )
