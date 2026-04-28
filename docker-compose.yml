@@ -39,7 +39,7 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "8000:8000"
+      - "9000:9000"
     volumes:
       - ./media:/app/media
       - ./config.yaml:/app/config.yaml
@@ -49,7 +49,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 9000 --reload
 
   worker:
     build:

@@ -48,7 +48,7 @@ source venv/bin/activate && alembic upgrade head
 python run.py
 
 # 6. Access
-# Use the local IP address shown in the terminal (e.g., http://192.168.1.10:8000)
+# Use the local IP address shown in the terminal (e.g., http://192.168.1.10:9000)
 # to access the dashboard from any device on the same network.
 ```
 

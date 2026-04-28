@@ -205,7 +205,7 @@ echo  ^|  4. Run the Celery worker (new terminal):                  ^|
 echo  ^|        venv\Scripts\celery -A app.alerts.celery_app        ^|
 echo  ^|               worker --loglevel=info --pool=solo           ^|
 echo  ^|     (--pool=solo is recommended on Windows)                ^|
-echo  ^|  5. Open browser: http://localhost:8000                    ^|
+echo  ^|  5. Open browser: http://localhost:9000                    ^|
 echo  +============================================================+
 echo.
 

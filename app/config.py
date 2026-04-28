@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     secret_key: str = "changeme"
     debug: bool = False
     app_host: str = "0.0.0.0"
-    app_port: int = 8000
+    app_port: int = 9000
 
     # ── Detection ─────────────────────────────────────────────────────────────
     process_fps: int = 10

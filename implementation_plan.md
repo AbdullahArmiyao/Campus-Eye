@@ -287,7 +287,7 @@ Campus Eye/
 - `docker compose up --build` should start all services without errors.
 
 ### Manual Verification
-1. Open `http://localhost:8000` — dashboard loads.
+1. Open `http://localhost:9000` — dashboard loads.
 2. Register a face via the form → confirm it appears in the face list.
 3. Upload a short video file → confirm frames are processed and displayed.
 4. Trigger a detected event → confirm alert appears in the dashboard alert panel.
