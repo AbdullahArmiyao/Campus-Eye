@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -97,7 +98,18 @@ async def _persist_user_and_embeddings(
     """Create User + multiple FaceEmbedding rows in one transaction."""
     user = User(name=name, role=role, student_id=student_id, photo_path=photo_path)
     db.add(user)
-    await db.flush()
+    
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        # Clean up the created photo if it exists
+        if photo_path:
+            Path(photo_path).unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A user with student ID '{student_id}' is already registered."
+        )
 
     face_embs: list[FaceEmbedding] = []
     for emb in embeddings:
